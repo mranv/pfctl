@@ -3,115 +3,92 @@
 //  pfctl
 //
 //  Created by Anubhav Gain on 07/04/24.
-//
+
 import Foundation
 
-func readIPAndPortFromFile(fileURL: URL) -> (String, String) {
-    guard let xmlContent = try? String(contentsOf: fileURL) else {
-        fatalError("Failed to read file at: \(fileURL.path)")
+func readIPAndPortFromFile(filePath: String) -> (String, String)? {
+    // Read the contents of the file
+    guard let content = try? String(contentsOfFile: filePath) else {
+        print("Failed to read file")
+        return nil
     }
     
-    let regex = try! NSRegularExpression(pattern: "<address>(.*?)</address>.*?<port>(.*?)</port>", options: [.dotMatchesLineSeparators])
-    let matches = regex.matches(in: xmlContent, range: NSRange(xmlContent.startIndex..., in: xmlContent))
-    
-    guard let match = matches.first else {
-        fatalError("IP address or port not found in the configuration file.")
+    // Extract IP address and port from the content
+    guard let ipRange = content.range(of: "<address>(.*?)</address>", options: .regularExpression),
+          let portRange = content.range(of: "<port>(.*?)</port>", options: .regularExpression) else {
+        print("IP address or port not found in file")
+        return nil
     }
     
-    let ipRange = Range(match.range(at: 1), in: xmlContent)!
-    let portRange = Range(match.range(at: 2), in: xmlContent)!
-    
-    let ip = xmlContent[ipRange].trimmingCharacters(in: .whitespacesAndNewlines)
-    let port = xmlContent[portRange].trimmingCharacters(in: .whitespacesAndNewlines)
+    let ip = String(content[ipRange]).replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression, range: nil).trimmingCharacters(in: .whitespacesAndNewlines)
+    let port = String(content[portRange]).replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression, range: nil).trimmingCharacters(in: .whitespacesAndNewlines)
     
     return (ip, port)
 }
 
-func updateConfigFileWithTimestamp(fileURL: URL, timestamp: String) {
-    guard var xmlContent = try? String(contentsOf: fileURL) else {
-        fatalError("Failed to read file at: \(fileURL.path)")
+func updateConfigFileWithTimestamp(filePath: String, timestamp: String) {
+    // Read contents of the file
+    guard var content = try? String(contentsOfFile: filePath) else {
+        print("Failed to read file")
+        return
     }
     
-    let insertionPoint = xmlContent.range(of: "</ossec_config>")
-    guard let insertionIndex = insertionPoint?.lowerBound else {
-        fatalError("Failed to find insertion point in the configuration file.")
+    // Find the position to insert the label
+    guard let insertionPoint = content.range(of: "</ossec_config>") else {
+        print("Insertion point not found")
+        return
     }
     
-    let newLabel = """
-    \n<labels>
-      <label key="firewall.stop-time">\(timestamp)</label>
-    </labels>
-    """
+    // Insert the label with the timestamp
+    let newContent = "\n<labels>\n  <label key=\"isolated.time\">\(timestamp)</label>\n</labels>\n"
+    content.insert(contentsOf: newContent, at: insertionPoint.lowerBound)
     
-    xmlContent.insert(contentsOf: newLabel, at: insertionIndex)
-    
+    // Write the updated content to the file
     do {
-        try xmlContent.write(to: fileURL, atomically: true, encoding: .utf8)
+        try content.write(toFile: filePath, atomically: true, encoding: .utf8)
+        print("File updated with timestamp")
     } catch {
-        fatalError("Failed to write updated content to file at: \(fileURL.path)")
+        print("Failed to update file: \(error)")
     }
 }
 
-func configurePFCTL(ip: String, port: String) {
-    // Run pfctl commands to configure firewall rules
-    let pfctlProcess = Process()
-    pfctlProcess.launchPath = "/sbin/pfctl"
-    
-    // Enable packet filtering
-    pfctlProcess.arguments = ["-E"]
-    pfctlProcess.launch()
-    pfctlProcess.waitUntilExit()
-    
-    // Add rules for inbound and outbound traffic
-    let addRulesProcess = Process()
-    addRulesProcess.launchPath = "/sbin/pfctl"
-    addRulesProcess.arguments = ["-q", "-f", "-"]
-    
-    let ruleString = """
-    rdr pass inet proto tcp from any to any port \(port) -> \(ip) port \(port)
-    pass out proto tcp from any to \(ip) port \(port)
-    pass in proto tcp from \(ip) port \(port) to any
-    """
-    
-    addRulesProcess.standardInput = Pipe()
-    addRulesProcess.standardOutput = Pipe()
-    
-    if let inputPipe = addRulesProcess.standardInput as? Pipe {
-        inputPipe.fileHandleForWriting.write(ruleString.data(using: .utf8)!)
-        inputPipe.fileHandleForWriting.closeFile()
-    }
-    
-    addRulesProcess.launch()
-    addRulesProcess.waitUntilExit()
-    
-    if addRulesProcess.terminationStatus == 0 {
-        print("PFCTL rules configured successfully.")
-    } else {
-        print("Failed to configure PFCTL rules.")
-    }
-}
-
+// Main function
 func main() {
-    let fileURL = URL(fileURLWithPath: "/Library/Ossec/etc/ossec.conf")
-    
     // Read IP address and port from the file
-    let (ip, port) = readIPAndPortFromFile(fileURL: fileURL)
+    guard let (ip, port) = readIPAndPortFromFile(filePath: "/Library/Ossec/etc/ossec.conf") else {
+        return
+    }
     
     // Get the current time as timestamp
-    let dateFormatter = DateFormatter()
-    dateFormatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
-    let currentTime = dateFormatter.string(from: Date())
+    let currentDateTime = Date()
+    let formatter = DateFormatter()
+    formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+    let timestamp = formatter.string(from: currentDateTime)
     
     // Update the configuration file with the timestamp
-    updateConfigFileWithTimestamp(fileURL: fileURL, timestamp: currentTime)
+    updateConfigFileWithTimestamp(filePath: "/Library/Ossec/etc/ossec.conf", timestamp: timestamp)
     
-    // Perform operations using pfctl
-    // Configure pfctl with IP and port
-    configurePFCTL(ip: ip, port: port)
+    // Configure packet filter using pfctl
     
-    // Print confirmation message
-    print("Configuration updated with timestamp: \(currentTime)")
+    // Enable packet filter
+    let enablePfctl = Process()
+    enablePfctl.launchPath = "/sbin/pfctl"
+    enablePfctl.arguments = ["-e"]
+    enablePfctl.launch()
+    
+    // Configure rules for inbound and outbound traffic
+    let configureRules1 = Process()
+    configureRules1.launchPath = "/sbin/pfctl"
+    configureRules1.arguments = ["-a", "anchorname", "-p", "tcp", "-s", ip, "--dport", port, "-j", "pass"]
+    configureRules1.launch()
+    
+    let configureRules2 = Process()
+    configureRules2.launchPath = "/sbin/pfctl"
+    configureRules2.arguments = ["-a", "anchorname", "-p", "tcp", "-d", ip, "--sport", port, "-j", "pass"]
+    configureRules2.launch()
+    
+    print("Packet filter configured with rules based on the IP address \(ip) and port \(port) from the file /Library/Ossec/etc/ossec.conf.")
 }
 
-// Call the main function to start the program
+// Call the main function
 main()
