@@ -76,9 +76,9 @@ func configurePFCTL(ip: String, port: String) {
     addRulesProcess.standardInput = Pipe()
     addRulesProcess.standardOutput = Pipe()
     
-    if let inputPipe = addRulesProcess.standardInput {
-        inputPipe.write(ruleString.data(using: .utf8)!)
-        inputPipe.close()
+    if let inputPipe = addRulesProcess.standardInput as? Pipe {
+        inputPipe.fileHandleForWriting.write(ruleString.data(using: .utf8)!)
+        inputPipe.fileHandleForWriting.closeFile()
     }
     
     addRulesProcess.launch()
