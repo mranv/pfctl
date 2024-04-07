@@ -11,24 +11,20 @@ func readIPAndPortFromFile(fileURL: URL) -> (String, String) {
         fatalError("Failed to read file at: \(fileURL.path)")
     }
     
-    let lines = xmlContent.components(separatedBy: .newlines)
+    let regex = try! NSRegularExpression(pattern: "<address>(.*?)</address>.*?<port>(.*?)</port>", options: [.dotMatchesLineSeparators])
+    let matches = regex.matches(in: xmlContent, range: NSRange(xmlContent.startIndex..., in: xmlContent))
     
-    var ip: String?
-    var port: String?
-    
-    for line in lines {
-        if line.contains("<address>") {
-            ip = line.replacingOccurrences(of: "<address>", with: "").replacingOccurrences(of: "</address>", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
-        } else if line.contains("<port>") {
-            port = line.replacingOccurrences(of: "<port>", with: "").replacingOccurrences(of: "</port>", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        
-        if let ip = ip, let port = port {
-            return (ip, port)
-        }
+    guard let match = matches.first else {
+        fatalError("IP address or port not found in the configuration file.")
     }
     
-    fatalError("IP address or port not found in the configuration file.")
+    let ipRange = Range(match.range(at: 1), in: xmlContent)!
+    let portRange = Range(match.range(at: 2), in: xmlContent)!
+    
+    let ip = xmlContent[ipRange].trimmingCharacters(in: .whitespacesAndNewlines)
+    let port = xmlContent[portRange].trimmingCharacters(in: .whitespacesAndNewlines)
+    
+    return (ip, port)
 }
 
 func updateConfigFileWithTimestamp(fileURL: URL, timestamp: String) {
@@ -80,9 +76,9 @@ func configurePFCTL(ip: String, port: String) {
     addRulesProcess.standardInput = Pipe()
     addRulesProcess.standardOutput = Pipe()
     
-    if let inputPipe = addRulesProcess.standardInput as? Pipe {
-        inputPipe.fileHandleForWriting.write(ruleString.data(using: .utf8)!)
-        inputPipe.fileHandleForWriting.closeFile()
+    if let inputPipe = addRulesProcess.standardInput {
+        inputPipe.write(ruleString.data(using: .utf8)!)
+        inputPipe.close()
     }
     
     addRulesProcess.launch()
@@ -110,8 +106,10 @@ func main() {
     updateConfigFileWithTimestamp(fileURL: fileURL, timestamp: currentTime)
     
     // Perform operations using pfctl
-    // Add your code here to configure pfctl and print messages
+    // Configure pfctl with IP and port
     configurePFCTL(ip: ip, port: port)
+    
+    // Print confirmation message
     print("Configuration updated with timestamp: \(currentTime)")
 }
 
