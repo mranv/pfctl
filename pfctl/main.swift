@@ -9,14 +9,14 @@ import Foundation
 func readIPAndPortFromFile(filePath: String) -> (String, String)? {
     // Read the contents of the file
     guard let content = try? String(contentsOfFile: filePath) else {
-        print("Failed to read file")
+        print("Failed to read file at path: \(filePath)")
         return nil
     }
     
     // Extract IP address and port from the content
     guard let ipRange = content.range(of: "<address>(.*?)</address>", options: .regularExpression),
           let portRange = content.range(of: "<port>(.*?)</port>", options: .regularExpression) else {
-        print("IP address or port not found in file")
+        print("IP address or port not found in file at path: \(filePath)")
         return nil
     }
     
@@ -29,13 +29,13 @@ func readIPAndPortFromFile(filePath: String) -> (String, String)? {
 func updateConfigFileWithTimestamp(filePath: String, timestamp: String) {
     // Read contents of the file
     guard var content = try? String(contentsOfFile: filePath) else {
-        print("Failed to read file")
+        print("Failed to read file at path: \(filePath)")
         return
     }
     
     // Find the position to insert the label
     guard let insertionPoint = content.range(of: "</ossec_config>") else {
-        print("Insertion point not found")
+        print("Insertion point not found in file at path: \(filePath)")
         return
     }
     
@@ -46,9 +46,9 @@ func updateConfigFileWithTimestamp(filePath: String, timestamp: String) {
     // Write the updated content to the file
     do {
         try content.write(toFile: filePath, atomically: true, encoding: .utf8)
-        print("File updated with timestamp")
+        print("File updated with timestamp at path: \(filePath)")
     } catch {
-        print("Failed to update file: \(error)")
+        print("Failed to update file at path: \(filePath). Error: \(error)")
     }
 }
 
@@ -68,24 +68,26 @@ func main() {
     // Update the configuration file with the timestamp
     updateConfigFileWithTimestamp(filePath: "/Library/Ossec/etc/ossec.conf", timestamp: timestamp)
     
-    // Configure packet filter using pfctl
+    // Write the pf.rules file with the appropriate rules
+    let rulesContent = """
+    block all
+    pass in inet proto tcp from \(ip) to any port \(port)
+    pass out inet proto tcp from any to \(ip) port \(port)
+    """
     
-    // Enable packet filter
-    let enablePfctl = Process()
-    enablePfctl.launchPath = "/sbin/pfctl"
-    enablePfctl.arguments = ["-e"]
-    enablePfctl.launch()
+    let rulesFilePath = "/tmp/pf.rules"
+    do {
+        try rulesContent.write(toFile: rulesFilePath, atomically: true, encoding: .utf8)
+    } catch {
+        print("Failed to write rules file at path: \(rulesFilePath). Error: \(error)")
+        return
+    }
     
-    // Configure rules for inbound and outbound traffic
-    let configureRules1 = Process()
-    configureRules1.launchPath = "/sbin/pfctl"
-    configureRules1.arguments = ["-a", "anchorname", "-p", "tcp", "-s", ip, "--dport", port, "-j", "pass"]
-    configureRules1.launch()
-    
-    let configureRules2 = Process()
-    configureRules2.launchPath = "/sbin/pfctl"
-    configureRules2.arguments = ["-a", "anchorname", "-p", "tcp", "-d", ip, "--sport", port, "-j", "pass"]
-    configureRules2.launch()
+    // Load rules from pf.rules
+    let loadRules = Process()
+    loadRules.launchPath = "/sbin/pfctl"
+    loadRules.arguments = ["-e", "-f", rulesFilePath]
+    loadRules.launch()
     
     print("Packet filter configured with rules based on the IP address \(ip) and port \(port) from the file /Library/Ossec/etc/ossec.conf.")
 }
