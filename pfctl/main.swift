@@ -36,7 +36,7 @@ func updateConfigFileWithTimestamp(filePath: String, timestamp: String) {
         return
     }
     
-    let newContent = "\n<labels>\n  <label key=\"isolated.time\">\(timestamp)</label>\n</labels>\n"
+    let newContent = "\n<labels>\n  <label key=\"unisolated.time\">\(timestamp)</label>\n</labels>\n"
     content.insert(contentsOf: newContent, at: insertionPoint.lowerBound)
     
     do {
@@ -100,13 +100,31 @@ func main() {
         return
     }
     
-    // Instead of directly loading rules with '-f' option, we'll append rules to pf.conf and reload
-    let appendRules = Process()
-    appendRules.launchPath = "/bin/sh"
-    appendRules.arguments = ["-c", "echo '\(rulesContent)' >> /etc/pf.conf && /sbin/pfctl -f /etc/pf.conf"]
-    appendRules.launch()
+    // Read contents of pf.conf
+    var pfConfContent = ""
+    do {
+        pfConfContent = try String(contentsOfFile: "/etc/pf.conf", encoding: .utf8)
+    } catch {
+        print("Failed to read pf.conf. Error: \(error)")
+        return
+    }
     
-    verifyRules()
+    // Remove rulesContent from pf.conf content
+    pfConfContent = pfConfContent.replacingOccurrences(of: rulesContent, with: "")
+    
+    // Write the updated contents back to pf.conf
+    do {
+        try pfConfContent.write(toFile: "/etc/pf.conf", atomically: true, encoding: .utf8)
+    } catch {
+        print("Failed to write to pf.conf. Error: \(error)")
+        return
+    }
+    
+    // Reload pf.conf
+    let reloadPF = Process()
+    reloadPF.launchPath = "/sbin/pfctl"
+    reloadPF.arguments = ["-f", "/etc/pf.conf"]
+    reloadPF.launch()
     
     enablePF()
     print("Packet filter enabled.")
