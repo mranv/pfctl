@@ -3,17 +3,15 @@
 //  pfctl
 //
 //  Created by Anubhav Gain on 07/04/24.
-
 import Foundation
 
+// Function to read IP address and port from file
 func readIPAndPortFromFile(filePath: String) -> (String, String)? {
-    // Read the contents of the file
     guard let content = try? String(contentsOfFile: filePath) else {
         print("Failed to read file at path: \(filePath)")
         return nil
     }
     
-    // Extract IP address and port from the content
     guard let ipRange = content.range(of: "<address>(.*?)</address>", options: .regularExpression),
           let portRange = content.range(of: "<port>(.*?)</port>", options: .regularExpression) else {
         print("IP address or port not found in file at path: \(filePath)")
@@ -26,24 +24,21 @@ func readIPAndPortFromFile(filePath: String) -> (String, String)? {
     return (ip, port)
 }
 
+// Function to update configuration file with timestamp
 func updateConfigFileWithTimestamp(filePath: String, timestamp: String) {
-    // Read contents of the file
     guard var content = try? String(contentsOfFile: filePath) else {
         print("Failed to read file at path: \(filePath)")
         return
     }
     
-    // Find the position to insert the label
     guard let insertionPoint = content.range(of: "</ossec_config>") else {
         print("Insertion point not found in file at path: \(filePath)")
         return
     }
     
-    // Insert the label with the timestamp
     let newContent = "\n<labels>\n  <label key=\"isolated.time\">\(timestamp)</label>\n</labels>\n"
     content.insert(contentsOf: newContent, at: insertionPoint.lowerBound)
     
-    // Write the updated content to the file
     do {
         try content.write(toFile: filePath, atomically: true, encoding: .utf8)
         print("File updated with timestamp at path: \(filePath)")
@@ -52,23 +47,45 @@ func updateConfigFileWithTimestamp(filePath: String, timestamp: String) {
     }
 }
 
-// Main function
+// Function to disable pf firewall
+func disablePF() {
+    let disablePF = Process()
+    disablePF.launchPath = "/sbin/pfctl"
+    disablePF.arguments = ["-d"] // Disable pf firewall
+    disablePF.launch()
+}
+
+// Function to verify rules
+func verifyRules() {
+    let verifyRules = Process()
+    verifyRules.launchPath = "/sbin/pfctl"
+    verifyRules.arguments = ["-sr"]
+    verifyRules.launch()
+}
+
+// Function to enable pf firewall
+func enablePF() {
+    let enablePF = Process()
+    enablePF.launchPath = "/sbin/pfctl"
+    enablePF.arguments = ["-e"] // Enable pf firewall
+    enablePF.launch()
+}
+
 func main() {
-    // Read IP address and port from the file
     guard let (ip, port) = readIPAndPortFromFile(filePath: "/Library/Ossec/etc/ossec.conf") else {
         return
     }
     
-    // Get the current time as timestamp
     let currentDateTime = Date()
     let formatter = DateFormatter()
     formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
     let timestamp = formatter.string(from: currentDateTime)
     
-    // Update the configuration file with the timestamp
     updateConfigFileWithTimestamp(filePath: "/Library/Ossec/etc/ossec.conf", timestamp: timestamp)
     
-    // Write the pf.rules file with the appropriate rules
+    disablePF()
+    print("Packet filter disabled.")
+    
     let rulesContent = """
     block all
     pass in inet proto tcp from \(ip) to any port \(port)
@@ -83,11 +100,16 @@ func main() {
         return
     }
     
-    // Load rules from pf.rules
-    let loadRules = Process()
-    loadRules.launchPath = "/sbin/pfctl"
-    loadRules.arguments = ["-e", "-f", rulesFilePath]
-    loadRules.launch()
+    // Instead of directly loading rules with '-f' option, we'll append rules to pf.conf and reload
+    let appendRules = Process()
+    appendRules.launchPath = "/bin/sh"
+    appendRules.arguments = ["-c", "echo '\(rulesContent)' >> /etc/pf.conf && /sbin/pfctl -f /etc/pf.conf"]
+    appendRules.launch()
+    
+    verifyRules()
+    
+    enablePF()
+    print("Packet filter enabled.")
     
     print("Packet filter configured with rules based on the IP address \(ip) and port \(port) from the file /Library/Ossec/etc/ossec.conf.")
 }
